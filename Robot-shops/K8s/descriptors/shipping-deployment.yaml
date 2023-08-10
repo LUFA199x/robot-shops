@@ -18,7 +18,7 @@ spec:
         io.kompose.service: shipping
     spec:
       containers:
-      - image: linuxacademycontent/rs-shipping:latest
+      - image: SolaOluwaLufa/rs-shipping:latest
         name: shipping
         ports:
         - containerPort: 8080

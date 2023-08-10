@@ -18,7 +18,7 @@ spec:
         io.kompose.service: payment
     spec:
       containers:
-      - image: linuxacademycontent/rs-payment:latest
+      - image: SolaOluwaLufa/rs-payment:latest
         name: payment
         env:
           - name: INSTANA_AGENT_HOST

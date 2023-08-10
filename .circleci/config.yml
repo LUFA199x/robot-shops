@@ -14,17 +14,6 @@ commands:
             unzip awscliv2.zip
             sudo ./aws/install
 
-  delete-all-pods:
-    description: Delete all pods
-    steps:
-      - run:
-          name: Deploy Docker image to EKS cluster
-          command: |
-            # sed -i "s|IMAGE|$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$DOCKER_USERNAME/$APP:latest|g" kubernetes_django/db/*yml
-            kubectl delete --all pods
-            kubectl delete --all services
-          when: on_fail
-
   terraform-plan-destroy:
     description: Delete infrastructure
     steps:
@@ -33,7 +22,7 @@ commands:
       - run:
           name: terraform create destroy plan
           command: |
-            cd infra_prov_with_terraform
+            cd robot-shops/Terraform-Scripts/resources
             terraform plan -destroy -out tfdestroy
           when: on_fail
 
@@ -43,16 +32,9 @@ commands:
       - run:
           name: terraform destroy
           command: |
-            cd infra_prov_with_terraform
+            cd robot-shops/Terraform-Scripts/resources
             terraform apply -auto-approve tfdestroy
           when: on_fail
-
-  # notify_on_failure:
-  #   steps:
-  #     - slack/notify:
-  #         event: fail
-  #         channel: cicd-pipeline
-  #         template: basic_fail_1
 
 jobs:
   ### PROVISION INFRASTRUCTURE
@@ -66,13 +48,12 @@ jobs:
       - run:
           name: Terraform init
           command: |
-            cd infra_prov_with_terraform
+            cd robot-shops/Terraform-Scripts/resources
             terraform init -input=false
       - persist_to_workspace:
           root: .
           paths:
             - .
-      # - notify_on_failure
 
   # execute the actions proposed
   terraform-plan:
@@ -84,13 +65,12 @@ jobs:
       - run:
           name: Terraform plan
           command: |
-            cd infra_prov_with_terraform
+            cd robot-shops/Terraform-Scripts/resources
             terraform plan -out tfapply
       - persist_to_workspace:
           root: .
           paths:
             - .
-      # - notify_on_failure
 
   # execute the actions proposed in a Terraform plan.
   terraform-apply:
@@ -102,7 +82,7 @@ jobs:
       - run:
           name: Terraform apply
           command: |
-            cd infra_prov_with_terraform
+            cd robot-shops/Terraform-Scripts/resources
             terraform apply -auto-approve tfapply
       - persist_to_workspace:
           root: .
@@ -110,11 +90,10 @@ jobs:
             - .
       - terraform-plan-destroy
       - terraform-destroy
-      # - notify_on_failure
 
   # BUILD APPLICATION
-  # build django application into docker image before shipping out to AWS EKS cluster
-  containerize-django-app:
+  # build robot application into docker image before rs-shipping out to AWS EKS cluster
+  robot-shops-containarized:
     docker:
       - image: cimg/python:3.10
     steps:
@@ -127,26 +106,175 @@ jobs:
             curl -L -o /tmp/docker-$VER.tgz https://get.docker.com/builds/Linux/x86_64/docker-$VER.tgz
             tar -xz -C /tmp -f /tmp/docker-$VER.tgz
             sudo mv /tmp/docker/* /usr/bin
-      - setup_remote_docker
+
       - run:
           name: Build Docker image
           command: |
-            cd django_project  
-            docker build -t django_project-app .
+            cd robot-shops/Robot-shops/rs-cart  
+            docker build -t rs-cart .
+      
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/rs-catalogue  
+            docker build -t rs-catalogue .
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/rs-dispatch  
+            docker build -t rs-dispatch .
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/rs-load-gen  
+            docker build -t rs-load-gen .
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/rs-mongo  
+            docker build -t rs-mongo .   
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/rs-mysql  
+            docker build -t rs-mysql .
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/rs-payment  
+            docker build -t rs-payment .
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/rs-ratings
+            docker build -t rs-ratings .
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/rs-shipping  
+            docker build -t rs-shipping .               
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/ rs-user 
+            docker build -t rs-user .
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/ rs-web 
+            docker build -t rs-web .            
 
       - run:
           name: Push to Docker Hub
           command: |
-            cd django_project
+            cd robot-shops/Robot-shops/rs-cart
             echo "$DOCKER_PASSWORD"
             docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
-            docker tag $APP:latest $DOCKER_USERNAME/$APP
-            docker push $DOCKER_USERNAME/$APP
-      # - notify_on_failure
+            docker tag rs-cart:latest $DOCKER_USERNAME/rs-cart
+            docker push $DOCKER_USERNAME/rs-cart
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-catalogue
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-catalogue:latest $DOCKER_USERNAME/rs-catalogue
+            docker push $DOCKER_USERNAME/rs-catalogue
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-dispatch
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-dispatch:latest $DOCKER_USERNAME/rs-dispatch
+            docker push $DOCKER_USERNAME/rs-dispatch        
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-load-gen
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-load-gen:latest $DOCKER_USERNAME/rs-load-gen
+            docker push $DOCKER_USERNAME/rs-load-gen  
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-mongo
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-mongo:latest $DOCKER_USERNAME/rs-mongo
+            docker push $DOCKER_USERNAME/rs-mongo
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-mysql
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-mysql:latest $DOCKER_USERNAME/rs-mysql
+            docker push $DOCKER_USERNAME/rs-mysql
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-payment
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-payment:latest $DOCKER_USERNAME/rs-payment
+            docker push $DOCKER_USERNAME/rs-payment
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-ratings
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-ratings:latest $DOCKER_USERNAME/rs-ratings
+            docker push $DOCKER_USERNAME/rs-ratings
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-shipping
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-shipping:latest $DOCKER_USERNAME/rs-shipping
+            docker push $DOCKER_USERNAME/rs-shipping
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-user
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-user:latest $DOCKER_USERNAME/rs-user
+            docker push $DOCKER_USERNAME/rs-user
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-web
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-web:latest $DOCKER_USERNAME/rs-web
+            docker push $DOCKER_USERNAME/rs-web
 
   # DEPLOY APPLICATION
-  # ship out django microservices kubernetes manifest files to AWS EKS cluster
-  ship-out-django-app:
+  # ship out robote microservices kubernetes manifest files to AWS EKS cluster
+  ship-out-robot-app:
     docker:
       - image: cimg/python:3.10
     steps:
@@ -159,76 +287,11 @@ jobs:
             chmod +x ./kubectl
             sudo mv ./kubectl /usr/local/bin/kubectl
             aws eks --region $AWS_REGION update-kubeconfig --name $EKS_CLUSTER_NAME
-            kubectl apply -f kubernetes_django/postgres-deployment-files/ConfigMap.yml
-            kubectl apply -f kubernetes_django/postgres-deployment-files/postgres-service.yml
-            kubectl apply -f kubernetes_django/postgres-deployment-files/postgres-pod.yml
-            kubectl apply -f kubernetes_django/postgres-deployment-files/postgres-deployment.yml
-            #############################################################################
-            kubectl apply -f kubernetes_django/django-deployment-files/app-service.yml
-            kubectl apply -f kubernetes_django/django-deployment-files/app-pod.yml
-            kubectl apply -f kubernetes_django/django-deployment-files/app-deployment.yml
-
-            kubectl get pods
-            kubectl get services
-      - delete-all-pods
-      - terraform-plan-destroy
-      - terraform-destroy
-      # - notify_on_failure
-
-  # deploy sock shop microservices kubernetes manifest files to AWS EKS cluster
-  deploy-sock-shop:
-    docker:
-      - image: cimg/python:3.10
-    steps:
-      - checkout
-      - install_awscli
-      - run:
-          name: Install kubectl, Install kubectl, Configure kubectl and deploy sock shop manifest files to AWS EKS cluster
-          command: |
-            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-            chmod +x ./kubectl
-            sudo mv ./kubectl /usr/local/bin/kubectl
-            aws eks --region $AWS_REGION update-kubeconfig --name $EKS_CLUSTER_NAME
-            kubectl create namespace sock-shop
-            kubectl apply -f kubernetes_sock-shop/
-      - delete-all-pods
-      - terraform-plan-destroy
-      - terraform-destroy
-      # - notify_on_failure
-
-  # deploy monitoring and visualization microservices manifest files to AWS EKS cluster
-  deploy-prometheus:
-    docker:
-      - image: cimg/python:3.10
-    steps:
-      - checkout
-      - install_awscli
-      - run:
-          name: Install kubectl, Configure kubectl and deploy prometheus manifest files to AWS EKS cluster
-          command: |
-            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-            chmod +x ./kubectl
-            sudo mv ./kubectl /usr/local/bin/kubectl
-            aws eks --region $AWS_REGION update-kubeconfig --name $EKS_CLUSTER_NAME
-            kubectl apply -f kubernetes_sock-shop/manifests-monitoring/
-      - delete-all-pods
-      - terraform-plan-destroy
-      - terraform-destroy
-      # - notify_on_failure
-
-  # report succesful deployment status to development and operation (DevOps) team
-  notify_on_success:
-    docker:
-      - image: cimg/base:stable
-    steps:
-      - slack/notify:
-          event: pass
-          channel: cicd-pipeline
-          template: success_tagged_deployment_1
+            kubectl apply -f robot-shops/Robot-shops/K8s/descriptors
 
 workflows:
   version: 2
-  django-deployment:
+  robot-deployment:
     jobs:
       - hold-provisioning:
           type: approval
@@ -256,28 +319,8 @@ workflows:
           filters:
             branches:
               only: [main]
-      - containerize-django-app:
+      - robot-shops-containarized:
           requires: [hold-deployment]
-          filters:
-            branches:
-              only: [main]
-      - ship-out-django-app:
-          requires: [containerize-django-app]
-          filters:
-            branches:
-              only: [main]
-      - deploy-sock-shop:
-          requires: [containerize-django-app]
-          filters:
-            branches:
-              only: [main]
-      - deploy-prometheus:
-          requires: [containerize-django-app]
-          filters:
-            branches:
-              only: [main]  
-      - notify_on_success:
-          requires: [deploy-prometheus]
           filters:
             branches:
               only: [main]

@@ -18,7 +18,7 @@ spec:
         io.kompose.service: dispatch
     spec:
       containers:
-      - image: linuxacademycontent/rs-dispatch:latest
+      - image: SolaOluwaLufa/rs-dispatch:latest
         name: dispatch
         env:
           - name: INSTANA_AGENT_HOST
