@@ -1,94 +1,283 @@
-# Use the latest 2.1 version of CircleCI pipeline process engine.
-# See: https://circleci.com/docs/2.0/configuration-reference
 version: 2.1
+orbs:
+  slack: circleci/slack@4.10.1
+  aws-cli: circleci/aws-cli@3.1.4
 
-# Define a job to be invoked later in a workflow.
-# See: https://circleci.com/docs/2.0/configuration-reference/#jobs
+commands:
+  install_awscli:
+    description: Install AWS CLI v2
+    steps:
+      - run:
+          name: Install AWS CLI v2
+          command: |
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip awscliv2.zip
+            sudo ./aws/install
+
+  delete-all-pods:
+    description: Delete all pods
+    steps:
+      - run:
+          name: Deploy Docker image to EKS cluster
+          command: |
+            # sed -i "s|IMAGE|$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$DOCKER_USERNAME/$APP:latest|g" kubernetes_django/db/*yml
+            kubectl delete --all pods
+            kubectl delete --all services
+          when: on_fail
+
+  terraform-plan-destroy:
+    description: Delete infrastructure
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: terraform create destroy plan
+          command: |
+            cd infra_prov_with_terraform
+            terraform plan -destroy -out tfdestroy
+          when: on_fail
+
+  terraform-destroy:
+    description: Delete infrastructure
+    steps:
+      - run:
+          name: terraform destroy
+          command: |
+            cd infra_prov_with_terraform
+            terraform apply -auto-approve tfdestroy
+          when: on_fail
+
+  # notify_on_failure:
+  #   steps:
+  #     - slack/notify:
+  #         event: fail
+  #         channel: cicd-pipeline
+  #         template: basic_fail_1
+
 jobs:
-  say-hello:
-    # Specify the execution environment. You can specify an image from Dockerhub or use one of our Convenience Images from CircleCI's Developer Hub.
-    # See: https://circleci.com/docs/2.0/configuration-reference/#docker-machine-macos-windows-executor
+  ### PROVISION INFRASTRUCTURE
+  # initialize the working directory containing Terraform configuration files
+  terraform-init:
+    working_directory: /tmp/project
     docker:
-      - image: cimg/base:stable
-    # Add steps to the job
-    # See: https://circleci.com/docs/2.0/configuration-reference/#steps
+      - image: docker.mirror.hashicorp.services/hashicorp/terraform:light
     steps:
       - checkout
       - run:
-          name: "Say hello"
-          command: "echo Hello, World!"
+          name: Terraform init
+          command: |
+            cd infra_prov_with_terraform
+            terraform init -input=false
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+      # - notify_on_failure
 
-  create_infrastructure:
-      docker:
-        - image: amazon/aws-cli
-      steps:
-        - checkout
-        - run:
-            name: Create Cloudformation Stack
-            command: |
-              aws cloudformation deploy \
-                --template-file template.yml \
-                --stack-name myStack-${CIRCLE_WORKFLOW_ID:0:5} \
-                --region eu-west-2
-  create_inventory:
-      docker:
-        - image: amazon/aws-cli
-      steps:
-        - run:
-            name: Create inventory file
-            command: |
-              echo [all] > ~/inventory
-        - run:
-            name: Move instance ip to inventory file
-            command: |
-              aws ec2 describe-instances --instance-ids $instance_id \
-                --query 'Reservations[*].Instances[*].PublicIpAddress' \
-                --output text >> ~/inventory
-        - run:
-            name: Install tar utility
-            command: |
-              yum install -y tar gzip
-        - persist_to_workspace:
-            root: ~/
-            paths:
-              - inventory
+  # execute the actions proposed
+  terraform-plan:
+    docker:
+      - image: docker.mirror.hashicorp.services/hashicorp/terraform:light
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: Terraform plan
+          command: |
+            cd infra_prov_with_terraform
+            terraform plan -out tfapply
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+      # - notify_on_failure
 
-# Exercise: Config and Deployment
-  configure_infrastructure: 
-      docker:
-        - image: python:3.7-alpine3.11
-      steps:
-        - checkout
-        - add_ssh_keys:
-            # You can get this ID in the section where you registered the SSH Key
-                fingerprints: ["11:75:cd:72:12:2d:b0:37:df:a1:9e:2f:00:b5:b3:ee"] 
-        - attach_workspace:
-            at: ~/
-        - run:
-            name: Install Ansible
-            command: apk add --update ansible
-        - run:
-            name: Install ssh
-            command: apk add --no-cache openssh
-        - run:
-            name: Avoiding strict-host checking
-            command: echo -e "Host *\n StrictHostKeyChecking no\n" > ~/.ssh/config
-        - run:
-            name: Run Playbook and Configure server
-            command: ansible-playbook -i ~/inventory main.yml
+  # execute the actions proposed in a Terraform plan.
+  terraform-apply:
+    docker:
+      - image: docker.mirror.hashicorp.services/hashicorp/terraform:light
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: Terraform apply
+          command: |
+            cd infra_prov_with_terraform
+            terraform apply -auto-approve tfapply
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+      - terraform-plan-destroy
+      - terraform-destroy
+      # - notify_on_failure
 
+  # BUILD APPLICATION
+  # build django application into docker image before shipping out to AWS EKS cluster
+  containerize-django-app:
+    docker:
+      - image: cimg/python:3.10
+    steps:
+      - checkout
+      - run:
+          name: Install Docker client
+          command: |
+            set -x
+            VER="17.03.0-ce"
+            curl -L -o /tmp/docker-$VER.tgz https://get.docker.com/builds/Linux/x86_64/docker-$VER.tgz
+            tar -xz -C /tmp -f /tmp/docker-$VER.tgz
+            sudo mv /tmp/docker/* /usr/bin
+      - setup_remote_docker
+      - run:
+          name: Build Docker image
+          command: |
+            cd django_project  
+            docker build -t django_project-app .
 
-# Invoke jobs via workflows
-# See: https://circleci.com/docs/2.0/configuration-reference/#workflows
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd django_project
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag $APP:latest $DOCKER_USERNAME/$APP
+            docker push $DOCKER_USERNAME/$APP
+      # - notify_on_failure
+
+  # DEPLOY APPLICATION
+  # ship out django microservices kubernetes manifest files to AWS EKS cluster
+  ship-out-django-app:
+    docker:
+      - image: cimg/python:3.10
+    steps:
+      - checkout
+      - install_awscli
+      - run:
+          name: Install kubectl
+          command: |
+            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x ./kubectl
+            sudo mv ./kubectl /usr/local/bin/kubectl
+            aws eks --region $AWS_REGION update-kubeconfig --name $EKS_CLUSTER_NAME
+            kubectl apply -f kubernetes_django/postgres-deployment-files/ConfigMap.yml
+            kubectl apply -f kubernetes_django/postgres-deployment-files/postgres-service.yml
+            kubectl apply -f kubernetes_django/postgres-deployment-files/postgres-pod.yml
+            kubectl apply -f kubernetes_django/postgres-deployment-files/postgres-deployment.yml
+            #############################################################################
+            kubectl apply -f kubernetes_django/django-deployment-files/app-service.yml
+            kubectl apply -f kubernetes_django/django-deployment-files/app-pod.yml
+            kubectl apply -f kubernetes_django/django-deployment-files/app-deployment.yml
+
+            kubectl get pods
+            kubectl get services
+      - delete-all-pods
+      - terraform-plan-destroy
+      - terraform-destroy
+      # - notify_on_failure
+
+  # deploy sock shop microservices kubernetes manifest files to AWS EKS cluster
+  deploy-sock-shop:
+    docker:
+      - image: cimg/python:3.10
+    steps:
+      - checkout
+      - install_awscli
+      - run:
+          name: Install kubectl, Install kubectl, Configure kubectl and deploy sock shop manifest files to AWS EKS cluster
+          command: |
+            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x ./kubectl
+            sudo mv ./kubectl /usr/local/bin/kubectl
+            aws eks --region $AWS_REGION update-kubeconfig --name $EKS_CLUSTER_NAME
+            kubectl create namespace sock-shop
+            kubectl apply -f kubernetes_sock-shop/
+      - delete-all-pods
+      - terraform-plan-destroy
+      - terraform-destroy
+      # - notify_on_failure
+
+  # deploy monitoring and visualization microservices manifest files to AWS EKS cluster
+  deploy-prometheus:
+    docker:
+      - image: cimg/python:3.10
+    steps:
+      - checkout
+      - install_awscli
+      - run:
+          name: Install kubectl, Configure kubectl and deploy prometheus manifest files to AWS EKS cluster
+          command: |
+            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x ./kubectl
+            sudo mv ./kubectl /usr/local/bin/kubectl
+            aws eks --region $AWS_REGION update-kubeconfig --name $EKS_CLUSTER_NAME
+            kubectl apply -f kubernetes_sock-shop/manifests-monitoring/
+      - delete-all-pods
+      - terraform-plan-destroy
+      - terraform-destroy
+      # - notify_on_failure
+
+  # report succesful deployment status to development and operation (DevOps) team
+  notify_on_success:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - slack/notify:
+          event: pass
+          channel: cicd-pipeline
+          template: success_tagged_deployment_1
+
 workflows:
-  infrastructure_config_and_deploy:
+  version: 2
+  django-deployment:
     jobs:
-#      - say-hello
-      - create_infrastructure
-      - create_inventory:
-          requires:
-            - create_infrastructure
-
-      -  configure_infrastructure:
-           requires:
-             - create_inventory
+      - hold-provisioning:
+          type: approval
+      - terraform-init:
+          requires: [hold-provisioning]
+          filters:
+            branches:
+              only: [main]
+      - terraform-plan:
+          requires: ["terraform-init"]
+          filters:
+            branches:
+              only: [main]
+      - hold-apply:
+          type: approval
+          requires: ["terraform-plan"]
+      - terraform-apply:
+          requires: [hold-apply]
+          filters:
+            branches:
+              only: [main]
+      - hold-deployment:
+          type: approval
+          requires: [terraform-apply]
+          filters:
+            branches:
+              only: [main]
+      - containerize-django-app:
+          requires: [hold-deployment]
+          filters:
+            branches:
+              only: [main]
+      - ship-out-django-app:
+          requires: [containerize-django-app]
+          filters:
+            branches:
+              only: [main]
+      - deploy-sock-shop:
+          requires: [containerize-django-app]
+          filters:
+            branches:
+              only: [main]
+      - deploy-prometheus:
+          requires: [containerize-django-app]
+          filters:
+            branches:
+              only: [main]  
+      - notify_on_success:
+          requires: [deploy-prometheus]
+          filters:
+            branches:
+              only: [main]
