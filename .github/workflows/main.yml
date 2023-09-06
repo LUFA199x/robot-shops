@@ -1,0 +1,329 @@
+name: Publish Docker image from Thetips4you
+
+on:
+  push:
+    branches: ['main']
+    
+jobs:
+ commands:
+  install_awscli:
+    description: Install AWS CLI v2
+    steps:
+      - run:
+          name: Install AWS CLI v2
+          command: |
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip awscliv2.zip
+            sudo ./aws/install
+
+  terraform-plan-destroy:
+    description: Delete infrastructure
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: terraform create destroy plan
+          command: |
+            cd robot-shops/Terraform-Scripts/resources
+            terraform plan -destroy -out tfdestroy
+          when: on_fail
+
+  terraform-destroy:
+    description: Delete infrastructure
+    steps:
+      - run:
+          name: terraform destroy
+          command: |
+            cd robot-shops/Terraform-Scripts/resources
+            terraform apply -auto-approve tfdestroy
+          when: on_fail
+
+  jobs:
+  ### PROVISION INFRASTRUCTURE
+  # initialize the working directory containing Terraform configuration files
+  terraform-init:
+    working_directory: /tmp/project
+    docker:
+      - image: docker.mirror.hashicorp.services/hashicorp/terraform:light
+    steps:
+      - checkout
+      - run:
+          name: Terraform init
+          command: |
+            cd robot-shops/Terraform-Scripts/resources
+            terraform init -input=false
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+
+  # execute the actions proposed
+  terraform-plan:
+    docker:
+      - image: docker.mirror.hashicorp.services/hashicorp/terraform:light
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: Terraform plan
+          command: |
+            cd robot-shops/Terraform-Scripts/resources
+            terraform plan -out tfapply
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+
+  # execute the actions proposed in a Terraform plan.
+  terraform-apply:
+    docker:
+      - image: docker.mirror.hashicorp.services/hashicorp/terraform:light
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: Terraform apply
+          command: |
+            cd robot-shops/Terraform-Scripts/resources
+            terraform apply -auto-approve tfapply
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+      - terraform-plan-destroy
+      - terraform-destroy
+
+  # BUILD APPLICATION
+  # build robot application into docker image before rs-shipping out to AWS EKS cluster
+  robot-shops-containarized:
+    docker:
+      - image: cimg/python:3.10
+    steps:
+      - checkout
+      - run:
+          name: Install Docker client
+          command: |
+            set -x
+            VER="17.03.0-ce"
+            curl -L -o /tmp/docker-$VER.tgz https://get.docker.com/builds/Linux/x86_64/docker-$VER.tgz
+            tar -xz -C /tmp -f /tmp/docker-$VER.tgz
+            sudo mv /tmp/docker/* /usr/bin
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/rs-cart  
+            docker build -t rs-cart .
+      
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/rs-catalogue  
+            docker build -t rs-catalogue .
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/rs-dispatch  
+            docker build -t rs-dispatch .
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/rs-load-gen  
+            docker build -t rs-load-gen .
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/rs-mongo  
+            docker build -t rs-mongo .   
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/rs-mysql  
+            docker build -t rs-mysql .
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/rs-payment  
+            docker build -t rs-payment .
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/rs-ratings
+            docker build -t rs-ratings .
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/rs-shipping  
+            docker build -t rs-shipping .               
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/ rs-user 
+            docker build -t rs-user .
+
+      - run:
+          name: Build Docker image
+          command: |
+            cd robot-shops/Robot-shops/ rs-web 
+            docker build -t rs-web .            
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-cart
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-cart:latest $DOCKER_USERNAME/rs-cart
+            docker push $DOCKER_USERNAME/rs-cart
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-catalogue
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-catalogue:latest $DOCKER_USERNAME/rs-catalogue
+            docker push $DOCKER_USERNAME/rs-catalogue
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-dispatch
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-dispatch:latest $DOCKER_USERNAME/rs-dispatch
+            docker push $DOCKER_USERNAME/rs-dispatch        
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-load-gen
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-load-gen:latest $DOCKER_USERNAME/rs-load-gen
+            docker push $DOCKER_USERNAME/rs-load-gen  
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-mongo
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-mongo:latest $DOCKER_USERNAME/rs-mongo
+            docker push $DOCKER_USERNAME/rs-mongo
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-mysql
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-mysql:latest $DOCKER_USERNAME/rs-mysql
+            docker push $DOCKER_USERNAME/rs-mysql
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-payment
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-payment:latest $DOCKER_USERNAME/rs-payment
+            docker push $DOCKER_USERNAME/rs-payment
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-ratings
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-ratings:latest $DOCKER_USERNAME/rs-ratings
+            docker push $DOCKER_USERNAME/rs-ratings
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-shipping
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-shipping:latest $DOCKER_USERNAME/rs-shipping
+            docker push $DOCKER_USERNAME/rs-shipping
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-user
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-user:latest $DOCKER_USERNAME/rs-user
+            docker push $DOCKER_USERNAME/rs-user
+
+      - run:
+          name: Push to Docker Hub
+          command: |
+            cd robot-shops/Robot-shops/rs-web
+            echo "$DOCKER_PASSWORD"
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            docker tag rs-web:latest $DOCKER_USERNAME/rs-web
+            docker push $DOCKER_USERNAME/rs-web
+
+  # DEPLOY APPLICATION
+  # ship out robote microservices kubernetes manifest files to AWS EKS cluster
+  ship-out-robot-app:
+    docker:
+      - image: cimg/python:3.10
+    steps:
+      - checkout
+      - install_awscli
+      - run:
+          name: Install kubectl
+          command: |
+            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x ./kubectl
+            sudo mv ./kubectl /usr/local/bin/kubectl
+            aws eks --region $AWS_REGION update-kubeconfig --name $EKS_CLUSTER_NAME
+            kubectl apply -f robot-shops/Robot-shops/K8s/descriptors
+
+
+
+  version: 2
+  robot-deployment:
+    jobs:
+      - hold-provisioning:
+          type: approval
+      - terraform-init:
+          requires: [hold-provisioning]
+          filters:
+            branches:
+              only: [main]
+      - terraform-plan:
+          requires: ["terraform-init"]
+          filters:
+            branches:
+              only: [main]
+      - hold-apply:
+          type: approval
+          requires: ["terraform-plan"]
+      - terraform-apply:
+          requires: [hold-apply]
+          filters:
+            branches:
+              only: [main]
+      - hold-deployment:
+          type: approval
+          requires: [terraform-apply]
+          filters:
+            branches:
+              only: [main]
+      - robot-shops-containarized:
+          requires: [hold-deployment]
+          filters:
+            branches:
+              only: [main]
